@@ -14,7 +14,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
-os.makedirs("images", exist_ok=True)
+IMAGE_SAVE_FOLDER = "images-2"
+
+os.makedirs(IMAGE_SAVE_FOLDER, exist_ok=True)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
@@ -28,10 +30,44 @@ parser.add_argument("--n_classes", type=int, default=10, help="number of classes
 parser.add_argument("--img_size", type=int, default=32, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
 parser.add_argument("--sample_interval", type=int, default=400, help="interval between image sampling")
+# parser.add_argument("--n_samples", type=int, default=1000, help="samples to save per epoch")
 opt = parser.parse_args()
 print(opt)
 
 cuda = True if torch.cuda.is_available() else False
+
+class SavedSamples():
+    def __init__(self, total_n, device):
+        self.weights = torch.zeros(total_n, requires_grad=True, device=torch.device(device))
+        self.samples = None
+        self.labels = None
+        self.num_samples = 0
+        self.gen_weight = torch.tensor(1.0, requires_grad=True, device=torch.device(device))
+        pass
+    
+    def add_samples(self, samples, labels):
+        n_samples = samples.shape[0]
+        new_weight = self.gen_weight - torch.log(torch.tensor(n_samples))
+        self.weights.data[self.num_samples: self.num_samples + n_samples] = new_weight
+        # print(n_samples, new_weight, self.gen_weight)
+        self.gen_weight.data = new_weight
+        # print(self.gen_weight)
+        self.num_samples += n_samples
+        
+        if self.samples is None:
+            self.samples = samples
+            self.labels = labels
+        else:
+            self.samples = torch.cat((self.samples, samples))
+            self.labels = torch.cat((self.labels, labels))
+
+    
+    def get_samples(self, n):
+        indices = torch.randperm(self.num_samples)[:n]
+        return self.samples[indices], self.labels[indices], self.weights[indices], self.gen_weight * n / self.num_samples
+    
+    
+    
 
 
 def weights_init_normal(m):
@@ -109,8 +145,8 @@ class Discriminator(nn.Module):
 
 
 # Loss functions
-adversarial_loss = torch.nn.BCELoss()
-auxiliary_loss = torch.nn.CrossEntropyLoss()
+adversarial_loss = torch.nn.BCELoss(reduction='none')
+auxiliary_loss = torch.nn.CrossEntropyLoss(reduction='none')
 
 # Initialize generator and discriminator
 generator = Generator()
@@ -141,12 +177,18 @@ dataloader = torch.utils.data.DataLoader(
     shuffle=True,
 )
 
+# SavedSamples
+saved_samples = SavedSamples(opt.n_epochs * dataloader.__len__() * opt.batch_size, "cuda" if torch.cuda.is_available() else "cpu")
+
 # Optimizers
 optimizer_G = torch.optim.Adam(generator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
+optimizer_Weights = torch.optim.Adam([saved_samples.weights, saved_samples.gen_weight], lr=opt.lr, betas=(opt.b1, opt.b2))
 
 FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
+
+
 
 
 def sample_image(n_row, batches_done):
@@ -157,7 +199,7 @@ def sample_image(n_row, batches_done):
     labels = np.array([num for _ in range(n_row) for num in range(n_row)])
     labels = Variable(LongTensor(labels))
     gen_imgs = generator(z, labels)
-    save_image(gen_imgs.data, "images/%d.png" % batches_done, nrow=n_row, normalize=True)
+    save_image(gen_imgs.data, IMAGE_SAVE_FOLDER + "/%d.png" % batches_done, nrow=n_row, normalize=True)
 
 
 # ----------
@@ -182,6 +224,7 @@ for epoch in range(opt.n_epochs):
         # -----------------
 
         optimizer_G.zero_grad()
+        optimizer_Weights.zero_grad()
 
         # Sample noise and labels as generator input
         z = Variable(FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim))))
@@ -189,13 +232,32 @@ for epoch in range(opt.n_epochs):
 
         # Generate a batch of images
         gen_imgs = generator(z, gen_labels)
+        
+        if saved_samples.num_samples > 0:
+            prev_gens, prev_labels, prev_weights, gen_weight = saved_samples.get_samples(batch_size)
+            softmax_weights = torch.nn.functional.softmax(torch.cat((prev_weights, gen_weight.view(1))) , 0)
+            prev_pred, prev_aux = discriminator(prev_gens)
+            g_loss_prev = torch.sum((adversarial_loss(prev_pred, valid).squeeze() + auxiliary_loss(prev_aux, prev_labels).squeeze()) / 2 * softmax_weights[:-1])
+            # print(adversarial_loss(prev_pred, fake).squeeze(), softmax_weights[:-1])
 
-        # Loss measures generator's ability to fool the discriminator
-        validity, pred_label = discriminator(gen_imgs)
-        g_loss = 0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels))
 
-        g_loss.backward()
+            validity, pred_label = discriminator(gen_imgs)
+            g_loss = torch.mean(0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels))) * softmax_weights[-1]
+            
+            if i % 100 == 0:
+                print(torch.cat((prev_weights, gen_weight.view(1))))
+                print(softmax_weights)
+
+            g_loss += g_loss_prev
+        else:
+            # Loss measures generator's ability to fool the discriminator
+            validity, pred_label = discriminator(gen_imgs)
+            g_loss = torch.mean(0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels)))
+
+        g_loss.backward(retain_graph=True)
         optimizer_G.step()
+        optimizer_Weights.step()
+
 
         # ---------------------
         #  Train Discriminator
@@ -203,13 +265,14 @@ for epoch in range(opt.n_epochs):
 
         optimizer_D.zero_grad()
 
+
         # Loss for real images
         real_pred, real_aux = discriminator(real_imgs)
-        d_real_loss = (adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2
+        d_real_loss = torch.mean((adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2)
 
         # Loss for fake images
         fake_pred, fake_aux = discriminator(gen_imgs.detach())
-        d_fake_loss = (adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2
+        d_fake_loss = torch.mean((adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2)
 
         # Total discriminator loss
         d_loss = (d_real_loss + d_fake_loss) / 2
@@ -221,6 +284,13 @@ for epoch in range(opt.n_epochs):
 
         d_loss.backward()
         optimizer_D.step()
+        
+        # -------------------------
+        #  Save generated samples
+        # -------------------------
+        
+        saved_samples.add_samples(gen_imgs.detach(), gen_labels.detach())
+        
 
         print(
             "[Epoch %d/%d] [Batch %d/%d] [D loss: %f, acc: %d%%] [G loss: %f]"
@@ -229,3 +299,6 @@ for epoch in range(opt.n_epochs):
         batches_done = epoch * len(dataloader) + i
         if batches_done % opt.sample_interval == 0:
             sample_image(n_row=10, batches_done=batches_done)
+            
+        # if i > 40:
+        #     exit()
