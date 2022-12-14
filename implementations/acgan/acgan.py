@@ -271,8 +271,15 @@ for epoch in range(opt.n_epochs):
         d_real_loss = torch.mean((adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2)
 
         # Loss for fake images
-        fake_pred, fake_aux = discriminator(gen_imgs.detach())
-        d_fake_loss = torch.mean((adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2)
+        if saved_samples.num_samples > 0:
+            d_fake_loss_prev = torch.sum((adversarial_loss(prev_pred, fake).squeeze() + auxiliary_loss(prev_aux, prev_labels).squeeze()) / 2 * softmax_weights[:-1])
+            # print(adversarial_loss(prev_pred, fake).squeeze(), softmax_weights[:-1])
+            fake_pred, fake_aux = discriminator(gen_imgs.detach())
+            d_fake_loss = torch.mean(0.5 * (adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels))) * softmax_weights[-1]
+            d_fake_loss += d_fake_loss_prev
+        else:
+            fake_pred, fake_aux = discriminator(gen_imgs.detach())
+            d_fake_loss = torch.mean((adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2)
 
         # Total discriminator loss
         d_loss = (d_real_loss + d_fake_loss) / 2
