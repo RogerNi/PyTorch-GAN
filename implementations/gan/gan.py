@@ -14,10 +14,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
-os.makedirs("images", exist_ok=True)
+from torch.utils.data import WeightedRandomSampler
+
+import pickle
+import matplotlib.pyplot as plt
+
+SAVED_FOLDER = "images-sampled-on-prob"
+os.makedirs(SAVED_FOLDER, exist_ok=True)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=100, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
 parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
@@ -33,6 +39,32 @@ print(opt)
 img_shape = (opt.channels, opt.img_size, opt.img_size)
 
 cuda = True if torch.cuda.is_available() else False
+
+
+class SavedSamples():
+    def __init__(self, total_n, device):
+        self.device = device
+        self.weights = torch.zeros(total_n, requires_grad=True, device=torch.device(device))
+        self.samples = torch.zeros((total_n, 1, opt.img_size, opt.img_size), device=torch.device(device))
+        self.num_samples = 0
+        self.gen_weight = torch.tensor(1.0, requires_grad=True, device=torch.device(device))
+        pass
+    
+    def add_samples(self, samples):
+        n_samples = samples.shape[0]
+        new_weight = self.gen_weight - torch.log(torch.tensor(n_samples)) # calculate the new weight for new added samples and the generator
+        self.weights.data[self.num_samples: self.num_samples + n_samples] = new_weight # assign the new weight for new added samples
+        self.gen_weight.data = new_weight # assign the new weight for the generator
+        self.num_samples += n_samples
+        self.samples[self.num_samples: self.num_samples + n_samples] = samples # save samples
+
+    
+    def get_samples(self, n):
+        indices = list(WeightedRandomSampler(
+            torch.nn.functional.softmax(self.weights[:self.num_samples], 0), n, replacement=False)) # weighted random samples
+        
+        # return samples, corresponding weights and the weight for the generator (weighted by n/self.num_samples)
+        return self.samples[indices], self.weights[indices], self.gen_weight * n / self.num_samples 
 
 
 class Generator(nn.Module):
@@ -82,7 +114,7 @@ class Discriminator(nn.Module):
 
 
 # Loss function
-adversarial_loss = torch.nn.BCELoss()
+adversarial_loss = torch.nn.BCELoss(reduction='none') # set reduction to none to let it return one loss value per sample, not per batch
 
 # Initialize generator and discriminator
 generator = Generator()
@@ -108,11 +140,20 @@ dataloader = torch.utils.data.DataLoader(
     shuffle=True,
 )
 
+# SavedSamples
+saved_samples = SavedSamples(opt.n_epochs * dataloader.__len__() * opt.batch_size, "cuda" if torch.cuda.is_available() else "cpu")
+
 # Optimizers
 optimizer_G = torch.optim.Adam(generator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
+optimizer_Weights = torch.optim.Adam([saved_samples.weights, saved_samples.gen_weight], lr=opt.lr, betas=(opt.b1, opt.b2))
+
 
 Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
+
+g_loss_list = []
+d_real_loss_list = []
+d_fake_loss_list = []
 
 # ----------
 #  Training
@@ -133,18 +174,40 @@ for epoch in range(opt.n_epochs):
         # -----------------
 
         optimizer_G.zero_grad()
+        optimizer_Weights.zero_grad()
+
 
         # Sample noise as generator input
         z = Variable(Tensor(np.random.normal(0, 1, (imgs.shape[0], opt.latent_dim))))
 
         # Generate a batch of images
         gen_imgs = generator(z)
+        
+        if saved_samples.num_samples > 0:
+            prev_gens, prev_weights, gen_weight = saved_samples.get_samples(imgs.shape[0]) # select saved samples (of the number of batch size)
+            softmax_weights = torch.nn.functional.softmax(torch.cat((prev_weights, gen_weight.view(1))) , 0) # do softmax
+            prev_pred = discriminator(prev_gens)
+            
+            # get weighted average, adversarial_loss return one loss value per sample, not per batch
+            g_loss_prev = torch.sum(adversarial_loss(prev_pred, valid).squeeze() * softmax_weights[:-1]) 
 
-        # Loss measures generator's ability to fool the discriminator
-        g_loss = adversarial_loss(discriminator(gen_imgs), valid)
 
-        g_loss.backward()
+            validity = discriminator(gen_imgs)
+            g_loss = torch.mean(adversarial_loss(validity, valid)) * softmax_weights[-1] # get weighted loss
+            
+            if i % 100 == 0:
+                print(torch.cat((prev_weights, gen_weight.view(1))))
+                print(softmax_weights)
+
+            g_loss += g_loss_prev
+        else:
+            # Loss measures generator's ability to fool the discriminator
+            validity = discriminator(gen_imgs)
+            g_loss = torch.mean(adversarial_loss(validity, valid))
+        
+        g_loss.backward(retain_graph=True) # set retain_graph to True to support two optimizers operating on one graph
         optimizer_G.step()
+        optimizer_Weights.step()
 
         # ---------------------
         #  Train Discriminator
@@ -153,18 +216,52 @@ for epoch in range(opt.n_epochs):
         optimizer_D.zero_grad()
 
         # Measure discriminator's ability to classify real from generated samples
-        real_loss = adversarial_loss(discriminator(real_imgs), valid)
-        fake_loss = adversarial_loss(discriminator(gen_imgs.detach()), fake)
-        d_loss = (real_loss + fake_loss) / 2
+        real_loss =  torch.mean(adversarial_loss(discriminator(real_imgs), valid))
+        
+        # Loss for fake images
+        if saved_samples.num_samples > 0:
+            d_fake_loss_prev = torch.sum(adversarial_loss(prev_pred, fake).squeeze() * softmax_weights[:-1])
+            fake_pred = discriminator(gen_imgs.detach())
+            d_fake_loss = torch.mean(adversarial_loss(fake_pred, fake)) * softmax_weights[-1]
+            d_fake_loss += d_fake_loss_prev
+        else:
+            fake_pred = discriminator(gen_imgs.detach())
+            d_fake_loss = torch.mean(adversarial_loss(fake_pred, fake))
+        
+        d_loss = (real_loss + d_fake_loss) / 2
 
         d_loss.backward()
         optimizer_D.step()
+        
+        # -------------------------
+        #  Save generated samples
+        # -------------------------
+        
+        saved_samples.add_samples(gen_imgs.detach())
 
         print(
-            "[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f]"
-            % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), g_loss.item())
+            "[Epoch %d/%d] [Batch %d/%d] [D real loss: %f] [D fake loss: %f] [G loss: %f]"
+            % (epoch, opt.n_epochs, i, len(dataloader), real_loss.item(), d_fake_loss.item(), g_loss.item())
         )
+        
+        g_loss_list.append(g_loss.item())
+        d_real_loss_list.append(real_loss.item())
+        d_fake_loss_list.append(d_fake_loss.item())
 
         batches_done = epoch * len(dataloader) + i
         if batches_done % opt.sample_interval == 0:
-            save_image(gen_imgs.data[:25], "images/%d.png" % batches_done, nrow=5, normalize=True)
+            save_image(gen_imgs.data[:25], SAVED_FOLDER + "/%d.png" % batches_done, nrow=5, normalize=True)
+
+            
+# save losses to file and draw a plot
+with open('loss_lists', 'wb') as f:
+    pickle.dump([g_loss_list, d_real_loss_list, d_fake_loss_list], f)
+    
+x_len = len(g_loss_list)
+plt.plot(range(x_len), g_loss_list, label = "Generator loss")
+plt.plot(range(x_len), d_real_loss_list, label = "Discriminator real loss")
+plt.plot(range(x_len), d_fake_loss_list, label = "Discriminator fake loss")
+plt.legend()
+plt.xlabel('iter')
+plt.ylabel('loss')
+plt.savefig("loss_plot.svg", format="svg")
