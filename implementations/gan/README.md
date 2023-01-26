@@ -8,7 +8,7 @@ The following arguments (a subset of all arguments) can be used to control the b
 |new_weight_ratio|This argument is used to control how the new weights are initialized. Details can be found from line 82 to 85 in codes. Valid range is [0, 1], where 0 means new initialized weights for saved samples are very low and the weight for generator does not change. 1 means that the weight for generator will be completely distributed to new saved samples. 0.5 means that the weight for generator will be evenly distributed to saved samples such that the weight for generator and the weights for new saved samples are the same.|0.5 (evenly distributed)|
 |skip_weights|Whether to skip optimizing weights (weights do not change)|False (optimizing weights)|
 
-Here is some sample commands to run:
+Here are some sample commands to run:
 
 - Enable all features: `python gan.py`
 - Assign very low value to new weights: `python gan.py --new_weight_ratio 0`
