@@ -19,11 +19,30 @@ from torch.utils.data import WeightedRandomSampler, SubsetRandomSampler
 import pickle
 import matplotlib.pyplot as plt
 
-SAVED_FOLDER = "images-sampled-on-prob"
+from tqdm import tqdm
+
+import time
+
+#===========Redirect message to tqdm================
+import inspect
+# store builtin print
+old_print = print
+def new_print(*args, **kwargs):
+    # if tqdm.tqdm.write raises error, use builtin print
+    try:
+        tqdm.write(*args, **kwargs)
+    except:
+        old_print(*args, ** kwargs)
+# globaly replace print with new_print
+inspect.builtins.print = new_print
+#====================================================
+
+curr_time = time.strftime("%Y%m%d-%H%M%S")
+SAVED_FOLDER = curr_time + "-images-sampled-on-prob"
 os.makedirs(SAVED_FOLDER, exist_ok=True)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--n_epochs", type=int, default=100, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.0002, help="adam: learning rate")
 parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first order momentum of gradient")
@@ -33,29 +52,39 @@ parser.add_argument("--latent_dim", type=int, default=100, help="dimensionality 
 parser.add_argument("--img_size", type=int, default=28, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
 parser.add_argument("--sample_interval", type=int, default=400, help="interval betwen image samples")
-parser.add_argument("--sample_saving_delay", type=int, default=20, help="number of epochs to delay before starting to save samples")
+parser.add_argument("--sample_saving_delay", type=int, default=0, help="number of epochs to delay before starting to save samples")
+parser.add_argument("--new_weight_ratio", type=float, default=0.5, help="The ratio of the new weights for samples to the weight for generator. Default: 0.5, new sample weights each have the same value as the new weight for the generator. If set to 0, the new sample weights are 0 while the generator weight remains unchanged.")
+parser.add_argument("--epsilon", type=float, default=1e-10, help="A small value to avoid weight from becoming 0")
+parser.add_argument("--skip_weights", default=False, action="store_true", help="Whether to skip optimizing weights")
+parser.add_argument("--disable_gpu", default=False, action="store_true", help="Whether to disable GPU")
+
 
 opt = parser.parse_args()
 print(opt)
 
 img_shape = (opt.channels, opt.img_size, opt.img_size)
 
-cuda = True if torch.cuda.is_available() else False
+cuda = True if torch.cuda.is_available() and not opt.disable_gpu else False
 
 
 class SavedSamples():
     def __init__(self, total_n, device):
         self.device = device
-        self.weights = torch.ones(total_n + 1, requires_grad=True, device=torch.device(device)) # the first weight is for the generator
+        self.weights = torch.ones(total_n + 1, requires_grad=True, device=torch.device(device)) # the first (0th) weight is for the generator
+        self.unif = torch.ones(total_n + 1)
         self.samples = torch.zeros((total_n + 1, 1, opt.img_size, opt.img_size))
         self.num_samples = 1
         pass
     
     def add_samples(self, samples):
         n_samples = samples.shape[0]
-        new_weight = self.weights.data[0] - torch.log(torch.tensor(n_samples + 1)) # calculate the new weight for new added samples and the generator
-        self.weights.data[self.num_samples: self.num_samples + n_samples] = new_weight # assign the new weight for new added samples
-        self.weights.data[0] = new_weight # assign the new weight for the generator
+        # new_weight = self.weights.data[0] - torch.log(torch.tensor(n_samples + 1)) # calculate the new weight for new added samples and the generator
+        sample_ratio = (opt.new_weight_ratio + (opt.epsilon if opt.new_weight_ratio == 0 else 0)) / (opt.new_weight_ratio * n_samples + 1 - opt.new_weight_ratio)
+        gen_ratio = (1 - opt.new_weight_ratio + (opt.epsilon if opt.new_weight_ratio == 1 else 0)) / (opt.new_weight_ratio * n_samples + 1 - opt.new_weight_ratio)
+        new_gen_weight = self.weights.data[0] + torch.log(torch.tensor(gen_ratio))
+        new_sample_weight = self.weights.data[0] + torch.log(torch.tensor(sample_ratio))
+        self.weights.data[self.num_samples: self.num_samples + n_samples] = new_sample_weight # assign the new weight for new added samples
+        self.weights.data[0] = new_gen_weight # assign the new weight for the generator
         self.samples[self.num_samples: self.num_samples + n_samples] = samples.cpu() # save samples
         self.num_samples += n_samples
 
@@ -71,7 +100,7 @@ class SavedSamples():
         num_gen_indices = torch.sum(gen_indices) # get the number of samples needed from the generator
                 
         selected_samples = self.samples[indices].to(self.device) # sample from self.samples
-
+        
         if num_gen_indices > 0:
             # Sample from generator if num_gen_indices is larger than 0
             # Sample noise as generator input
@@ -89,7 +118,10 @@ class SavedSamples():
         # Generate one image
         self.samples[0] = generator(z)[0].detach()
 
-        indices = torch.randperm(self.num_samples)[:n] # uniformly sample without replacement
+        # indices = torch.randperm(self.num_samples)[:n] # uniformly sample without replacement (TOO SLOW!!, replaced with the followings)
+        # indices = self.unif[:self.num_samples].multinomial(n, replacement=False)
+        # indices = list(WeightedRandomSampler(self.unif[:self.num_samples], n, replacement=False))
+        indices = torch.randint(self.num_samples, (n,))
                 
         softmax_weights = torch.nn.functional.softmax(self.weights[:self.num_samples], 0) # softmax of all
         selected_weights = softmax_weights[indices] # get the softmax values of selected indices
@@ -190,11 +222,14 @@ g_loss_list = []
 d_real_loss_list = []
 d_fake_loss_list = []
 
+get_samples_by_weights_elapsed = 0
+get_samples_uniformly_elapsed = 0
+
 # ----------
 #  Training
 # ----------
 
-for epoch in range(opt.n_epochs):
+for epoch in tqdm(range(opt.n_epochs)):
     for i, (imgs, _) in enumerate(dataloader):
 
         # Adversarial ground truths
@@ -220,9 +255,11 @@ for epoch in range(opt.n_epochs):
         
         if saved_samples.num_samples > 1:
             # train the weights only when there are samples saved
+            start = time.time()
             samples, weights, sum_weights = saved_samples.get_samples_uniformly(imgs.shape[0], generator)
+            get_samples_uniformly_elapsed = time.time() - start
             
-            if not torch.isnan(weights)[0] and sum_weights > 1e-20: 
+            if not opt.skip_weights and not torch.isnan(weights)[0] and sum_weights > 1e-20: 
                 # only train the weights when the sum of softmax weights (before normalization) is big enough to avoid gradient to become nan
                 disc_pred = discriminator(samples)
                 weights_loss = torch.sum(adversarial_loss(disc_pred, valid).squeeze() * weights) 
@@ -263,7 +300,9 @@ for epoch in range(opt.n_epochs):
         real_loss =  torch.mean(adversarial_loss(discriminator(real_imgs), valid))
         
         # Loss for fake images
+        start = time.time()
         fake_imgs = saved_samples.get_samples_by_weights(imgs.shape[0], generator)
+        get_samples_by_weights_elapsed = time.time() - start
         fake_pred = discriminator(fake_imgs.detach())
         d_fake_loss = torch.mean(adversarial_loss(fake_pred, fake))
         
@@ -280,8 +319,8 @@ for epoch in range(opt.n_epochs):
             saved_samples.add_samples(gen_imgs.detach())
 
         print(
-            "[Epoch %d/%d] [Batch %d/%d] [D real loss: %f] [D fake loss: %f] [G loss: %f] [W loss: %f] [W grad: %f]"
-            % (epoch, opt.n_epochs, i, len(dataloader), real_loss.item(), d_fake_loss.item(), g_loss.item(), weights_loss.item() if weights_loss else 0, w_grad_sum)
+            "[Epoch %d/%d] [Batch %d/%d] [D real loss: %f] [D fake loss: %f] [G loss: %f] [W loss: %f] [W grad: %f] [elapse 1: %f] [elapse 2: %f]"
+            % (epoch, opt.n_epochs, i, len(dataloader), real_loss.item(), d_fake_loss.item(), g_loss.item(), weights_loss.item() if weights_loss else 0, w_grad_sum, get_samples_by_weights_elapsed, get_samples_uniformly_elapsed)
         )
         
         w_loss_list.append(weights_loss.item() if weights_loss else 0)
@@ -296,8 +335,12 @@ for epoch in range(opt.n_epochs):
 
             
 # save losses to file and draw a plot
-with open('loss_lists', 'wb') as f:
+with open(curr_time + '-loss_lists.pkl', 'wb') as f:
     pickle.dump([g_loss_list, d_real_loss_list, d_fake_loss_list, w_loss_list, w_grad_sum_list], f)
+    
+# save final weights to file
+with open(curr_time + "-weights.pkl", 'wb') as f:
+    pickle.dump(saved_samples.weights.tolist() , f)
     
 x_len = len(g_loss_list)
 plt.plot(range(x_len), g_loss_list, label = "Generator loss")
@@ -309,4 +352,4 @@ plt.plot(range(x_len), d_fake_loss_list, label = "Discriminator fake loss")
 plt.legend()
 plt.xlabel('iter')
 plt.ylabel('loss')
-plt.savefig("loss_plot.svg", format="svg")
+plt.savefig(curr_time + "-loss_plot.svg", format="svg")
