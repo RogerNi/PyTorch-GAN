@@ -202,6 +202,11 @@ class Discriminator(nn.Module):
 # Loss function
 adversarial_loss = torch.nn.BCELoss(reduction='none') # set reduction to none to let it return one loss value per sample, not per batch
 
+# policy gradient loss
+def pg_loss(pred, valid, weights):
+    log_p = torch.log(weights)
+    return -torch.mean(pred * log_p)
+
 # Initialize generator and discriminator
 generator = Generator()
 discriminator = Discriminator()
@@ -210,6 +215,7 @@ if cuda:
     generator.cuda()
     discriminator.cuda()
     adversarial_loss.cuda()
+    pg_loss.cuda()
 
 # Initialize weights
 generator.apply(weights_init_normal)
@@ -287,7 +293,9 @@ for epoch in tqdm(range(opt.n_epochs)):
             if not opt.skip_weights and not torch.isnan(weights)[0] and sum_weights > 1e-20: 
                 # only train the weights when the sum of softmax weights (before normalization) is big enough to avoid gradient to become nan
                 disc_pred = discriminator(samples)
-                weights_loss = torch.sum(adversarial_loss(disc_pred, valid).squeeze() * weights) 
+                # weights_loss = torch.sum(adversarial_loss(disc_pred, valid).squeeze() * weights) 
+                # use pg_loss instead of adversarial_loss
+                weights_loss = pg_loss(disc_pred, valid, weights)
                 weights_loss.backward()
                 w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
                 optimizer_Weights.step()
