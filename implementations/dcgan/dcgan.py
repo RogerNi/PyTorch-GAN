@@ -216,7 +216,6 @@ if cuda:
     generator.cuda()
     discriminator.cuda()
     adversarial_loss.cuda()
-    pg_loss.cuda()
 
 # Initialize weights
 generator.apply(weights_init_normal)
