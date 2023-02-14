@@ -60,6 +60,7 @@ parser.add_argument("--epsilon", type=float, default=1e-10, help="A small value 
 parser.add_argument("--skip_weights", default=False, action="store_true", help="Whether to skip optimizing weights")
 parser.add_argument("--disable_gpu", default=False, action="store_true", help="Whether to disable GPU")
 parser.add_argument("--min_gen_weight", type=float, default=torch.finfo().min, help="the lower bound of sampling weight of the generator")
+parser.add_argument("--policy_loss", default=False, help="whether to use policy gradient loss instead of binary cross entropy loss")
 
 
 opt = parser.parse_args()
@@ -203,6 +204,11 @@ class Discriminator(nn.Module):
 # Loss function
 adversarial_loss = torch.nn.BCELoss(reduction='none') # set reduction to none to let it return one loss value per sample, not per batch
 
+# policy gradient loss
+def pg_loss(pred, valid, weights):
+    log_p = torch.log(weights)
+    return -torch.mean(pred * log_p)
+
 # Initialize generator and discriminator
 generator = Generator()
 discriminator = Discriminator()
@@ -288,7 +294,12 @@ for epoch in tqdm(range(opt.n_epochs)):
             if not opt.skip_weights and not torch.isnan(weights)[0] and sum_weights > 1e-20: 
                 # only train the weights when the sum of softmax weights (before normalization) is big enough to avoid gradient to become nan
                 disc_pred = discriminator(samples)
-                weights_loss = torch.sum(adversarial_loss(disc_pred, valid).squeeze() * weights) 
+                if opt.policy_loss:
+                    # use pg_loss instead of adversarial_loss
+                    weights_loss = pg_loss(disc_pred, valid, weights)
+                else:
+                    weights_loss = torch.sum(adversarial_loss(disc_pred, valid).squeeze() * weights) 
+                
                 weights_loss.backward()
                 w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
                 optimizer_Weights.step()
