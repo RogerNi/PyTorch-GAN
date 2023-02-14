@@ -59,6 +59,7 @@ parser.add_argument("--new_weight_ratio", type=float, default=0.5, help="The rat
 parser.add_argument("--epsilon", type=float, default=1e-10, help="A small value to avoid weight from becoming 0")
 parser.add_argument("--skip_weights", default=False, action="store_true", help="Whether to skip optimizing weights")
 parser.add_argument("--disable_gpu", default=False, action="store_true", help="Whether to disable GPU")
+parser.add_argument("--min_gen_weight", type=float, default=torch.finfo().min, help="the lower bound of sampling weight of the generator")
 
 
 opt = parser.parse_args()
@@ -291,6 +292,8 @@ for epoch in tqdm(range(opt.n_epochs)):
                 weights_loss.backward()
                 w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
                 optimizer_Weights.step()
+                with torch.no_grad():
+                    saved_samples.weights[0] = torch.max(saved_samples.weights[0], torch.tensor(opt.min_gen_weight))
             
         # print("Train weights: ", saved_samples.weights[:saved_samples.num_samples])
             
