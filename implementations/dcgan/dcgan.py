@@ -291,8 +291,10 @@ for epoch in tqdm(range(opt.n_epochs)):
             start = time.time()
             if opt.policy_loss:
                 # sample by weights
-                samples, weights, sum_weights = saved_samples.get_samples_by_weights(imgs.shape[0], generator)
+                samples = saved_samples.get_samples_by_weights(imgs.shape[0], generator)
                 get_samples_by_weights_elapsed = time.time() - start
+                weights = saved_samples.weights
+                sum_weights = torch.sum(weights)
             else:
                 # sample uniformly
                 samples, weights, sum_weights = saved_samples.get_samples_uniformly(imgs.shape[0], generator)
