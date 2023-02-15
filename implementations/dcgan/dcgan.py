@@ -288,8 +288,14 @@ for epoch in tqdm(range(opt.n_epochs)):
         if saved_samples.num_samples > 1:
             # train the weights only when there are samples saved
             start = time.time()
-            samples, weights, sum_weights = saved_samples.get_samples_uniformly(imgs.shape[0], generator)
-            get_samples_uniformly_elapsed = time.time() - start
+            if opt.policy_loss:
+                # sample by weights
+                samples, weights, sum_weights = saved_samples.get_samples_by_weights(imgs.shape[0], generator)
+                get_samples_by_weights_elapsed = time.time() - start
+            else:
+                # sample uniformly
+                samples, weights, sum_weights = saved_samples.get_samples_uniformly(imgs.shape[0], generator)
+                get_samples_uniformly_elapsed = time.time() - start
             
             if not opt.skip_weights and not torch.isnan(weights)[0] and sum_weights > 1e-20: 
                 # only train the weights when the sum of softmax weights (before normalization) is big enough to avoid gradient to become nan
