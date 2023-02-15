@@ -253,6 +253,7 @@ w_grad_sum_list = []
 g_loss_list = []
 d_real_loss_list = []
 d_fake_loss_list = []
+w0_list = []
 
 get_samples_by_weights_elapsed = 0
 get_samples_uniformly_elapsed = 0
@@ -383,6 +384,7 @@ for epoch in tqdm(range(opt.n_epochs)):
         g_loss_list.append(g_loss.item())
         d_real_loss_list.append(real_loss.item())
         d_fake_loss_list.append(d_fake_loss.item())
+        w0_list.append(saved_samples.weights[0].item())
 
         if batches_done % opt.sample_interval == 0:
             save_image(gen_imgs.data[:25], SAVED_FOLDER + "/%d.png" % batches_done, nrow=5, normalize=True)
@@ -398,13 +400,38 @@ with open(curr_time + "-weights.pkl", 'wb') as f:
     pickle.dump(saved_samples.weights.tolist() , f)
     
 x_len = len(g_loss_list)
+
+g_loss_plt = plt.figure("Loss")
+ax1 = plt.subplot(4, 1, 1)
 plt.plot(range(x_len), g_loss_list, label = "Generator loss")
+plt.tick_params('x', labelbottom=False)
+plt.legend()
+ax2 = plt.subplot(4, 1, 2, sharex=ax1)
 plt.plot(range(x_len), d_real_loss_list, label = "Discriminator real loss")
+plt.tick_params('x', labelbottom=False)
+plt.legend()
+ax3 = plt.subplot(4, 1, 3, sharex=ax1)
 plt.plot(range(x_len), d_fake_loss_list, label = "Discriminator fake loss")
+plt.tick_params('x', labelbottom=False)
+plt.legend()
+ax4 = plt.subplot(4, 1, 4, sharex=ax1)
+plt.plot(range(x_len), w_loss_list, label = "Weights loss")
+plt.legend()
+plt.xlabel('iter')
+plt.savefig(curr_time + "-loss_plot.png", format="png")
+
+w_plt = plt.figure("weights")
+plt.plot(range(x_len), w0_list, label = "w0")
+plt.legend()
+plt.xlabel('iter')
+plt.savefig(curr_time + "-weights_plot.png", format="png")
+# plt.plot(range(x_len), g_loss_list, label = "Generator loss")
+# plt.plot(range(x_len), d_real_loss_list, label = "Discriminator real loss")
+# plt.plot(range(x_len), d_fake_loss_list, label = "Discriminator fake loss")
 # plt.plot(range(x_len), w_loss_list, label = "Weights loss")
 # plt.plot(range(x_len), w_grad_sum_list, label = "Sum of weights gradient")
 
-plt.legend()
-plt.xlabel('iter')
-plt.ylabel('loss')
-plt.savefig(curr_time + "-loss_plot.svg", format="svg")
+# plt.legend()
+# plt.xlabel('iter')
+# plt.ylabel('loss')
+# plt.savefig(curr_time + "-loss_plot.svg", format="svg")
