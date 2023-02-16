@@ -386,7 +386,8 @@ for epoch in tqdm(range(opt.n_epochs)):
         g_loss_list.append(g_loss.item())
         d_real_loss_list.append(real_loss.item())
         d_fake_loss_list.append(d_fake_loss.item())
-        w0_list.append(saved_samples.weights[0].item())
+        # w0_list.append(saved_samples.weights[0].item())
+        w0_list.append(torch.nn.functional.softmax(saved_samples.weights[:saved_samples.num_samples], 0))
 
         if batches_done % opt.sample_interval == 0:
             save_image(gen_imgs.data[:25], SAVED_FOLDER + "/%d.png" % batches_done, nrow=5, normalize=True)
@@ -427,13 +428,3 @@ plt.plot(range(x_len), w0_list, label = "w0")
 plt.legend()
 plt.xlabel('iter')
 plt.savefig(curr_time + "-weights_plot.png", format="png")
-# plt.plot(range(x_len), g_loss_list, label = "Generator loss")
-# plt.plot(range(x_len), d_real_loss_list, label = "Discriminator real loss")
-# plt.plot(range(x_len), d_fake_loss_list, label = "Discriminator fake loss")
-# plt.plot(range(x_len), w_loss_list, label = "Weights loss")
-# plt.plot(range(x_len), w_grad_sum_list, label = "Sum of weights gradient")
-
-# plt.legend()
-# plt.xlabel('iter')
-# plt.ylabel('loss')
-# plt.savefig(curr_time + "-loss_plot.svg", format="svg")
