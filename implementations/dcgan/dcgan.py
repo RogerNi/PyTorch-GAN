@@ -292,17 +292,14 @@ for epoch in tqdm(range(opt.n_epochs)):
         
         if saved_samples.num_samples > 1:
             # train the weights only when there are samples saved
-            start = time.time()
             if opt.policy_loss:
                 # sample by weights
                 samples = saved_samples.get_samples_by_weights(imgs.shape[0], generator)
-                get_samples_by_weights_elapsed = time.time() - start
                 weights = saved_samples.weights
                 sum_weights = torch.sum(weights)
             else:
                 # sample uniformly
                 samples, weights, sum_weights = saved_samples.get_samples_uniformly(imgs.shape[0], generator)
-                get_samples_uniformly_elapsed = time.time() - start
             
             if not opt.skip_weights and not torch.isnan(weights)[0] and sum_weights > 1e-20: 
                 # only train the weights when the sum of softmax weights (before normalization) is big enough to avoid gradient to become nan
@@ -353,9 +350,7 @@ for epoch in tqdm(range(opt.n_epochs)):
         real_loss =  torch.mean(adversarial_loss(discriminator(real_imgs), valid))
         
         # Loss for fake images
-        start = time.time()
         fake_imgs = saved_samples.get_samples_by_weights(imgs.shape[0], generator)
-        get_samples_by_weights_elapsed = time.time() - start
         fake_pred = discriminator(fake_imgs.detach())
         d_fake_loss = torch.mean(adversarial_loss(fake_pred, fake))
         
@@ -382,8 +377,8 @@ for epoch in tqdm(range(opt.n_epochs)):
             saved_samples.add_samples(gen_imgs.detach())
 
         print(
-            "[Epoch %d/%d] [Batch %d/%d] [D real loss: %f] [D fake loss: %f] [G loss: %f] [W loss: %f] [W grad: %f] [elapse 1: %f] [elapse 2: %f]"
-            % (epoch, opt.n_epochs, i, len(dataloader), real_loss.item(), d_fake_loss.item(), g_loss.item(), weights_loss.item() if weights_loss else 0, w_grad_sum, get_samples_by_weights_elapsed, get_samples_uniformly_elapsed)
+            "[Epoch %d/%d] [Batch %d/%d] [D real loss: %f] [D fake loss: %f] [G loss: %f] [W loss: %f] [W grad: %f]"
+            % (epoch, opt.n_epochs, i, len(dataloader), real_loss.item(), d_fake_loss.item(), g_loss.item(), weights_loss.item() if weights_loss else 0, w_grad_sum)
         )
         
         w_loss_list.append(weights_loss.item() if weights_loss else 0)
