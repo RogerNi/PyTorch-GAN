@@ -61,7 +61,7 @@ parser.add_argument("--epsilon", type=float, default=1e-10, help="A small value 
 parser.add_argument("--skip_weights", default=False, action="store_true", help="Whether to skip optimizing weights")
 parser.add_argument("--disable_gpu", default=False, action="store_true", help="Whether to disable GPU")
 parser.add_argument("--min_gen_weight", type=float, default=torch.finfo().min, help="the lower bound of raw sampling weight of the generator")
-parser.add_argument("--min_gen_norm_weight", type=float, default=0, help="the lower bound of normalized sampling weight of the generator, valid range: [0, 1]")
+parser.add_argument("--min_gen_norm_weight", type=float, default=0, help="the lower bound of normalized sampling weight of the generator, valid range: [0, 1)")
 parser.add_argument("--policy_loss", default=False, help="whether to use policy gradient loss instead of binary cross entropy loss")
 
 
@@ -314,7 +314,7 @@ for epoch in tqdm(range(opt.n_epochs)):
                 w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
                 optimizer_Weights.step()
                 with torch.no_grad():
-                    min_weight_derived_from_norm_min = torch.logsumexp(saved_samples.weights[1: saved_samples.num_samples], dim=0, keepdim=False) - torch.log(torch.tensor(1 / opt.min_gen_norm_weight - 1))
+                    min_weight_derived_from_norm_min = torch.logsumexp(saved_samples.weights[1: saved_samples.num_samples], dim=0) - torch.log(torch.tensor(1 / opt.min_gen_norm_weight - 1)) if opt.min_gen_norm_weight > 0 else torch.finfo().min
                     saved_samples.weights[0] = max([min_weight_derived_from_norm_min, saved_samples.weights[0], opt.min_gen_weight])
             
         # print("Train weights: ", saved_samples.weights[:saved_samples.num_samples])
