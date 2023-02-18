@@ -7,6 +7,9 @@ The following arguments (a subset of all arguments) can be used to control the b
 |sample_saving_delay|number of epochs to delay before starting to save samples|0 (no delay)|
 |new_weight_ratio|This argument is used to control how the new weights are initialized. Details can be found from line 82 to 85 in codes. Valid range is [0, 1], where 0 means new initialized weights for saved samples are very low and the weight for generator does not change. 1 means that the weight for generator will be completely distributed to new saved samples. 0.5 means that the weight for generator will be evenly distributed to saved samples such that the weight for generator and the weights for new saved samples are the same.|0.5 (evenly distributed)|
 |skip_weights|Whether to skip optimizing weights (weights do not change)|False (optimizing weights)|
+|min_gen_weight|The lower bound of raw sampling weight of the generator|`torch.finfo().min` (minimal possible value that can be represented in a PyTorch tensor)|
+|min_gen_norm_weight|The lower bound of normalized sampling weight of the generator, valid range: [0, 1]|0|
+|policy_loss|Whether to use policy gradient loss instead of binary cross entropy loss|False|
 
 Here are some sample commands to run:
 
