@@ -22,6 +22,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 import time
+import json
 
 #===========Redirect message to tqdm================
 import inspect
@@ -38,7 +39,7 @@ inspect.builtins.print = new_print
 #====================================================
 
 curr_time = time.strftime("%Y%m%d-%H%M%S")
-SAVED_FOLDER = curr_time + "-images-sampled-on-prob"
+SAVED_FOLDER = curr_time + "/images-sampled-on-prob"
 os.makedirs(SAVED_FOLDER, exist_ok=True)
 
 parser = argparse.ArgumentParser()
@@ -59,12 +60,15 @@ parser.add_argument("--new_weight_ratio", type=float, default=0.5, help="The rat
 parser.add_argument("--epsilon", type=float, default=1e-10, help="A small value to avoid weight from becoming 0")
 parser.add_argument("--skip_weights", default=False, action="store_true", help="Whether to skip optimizing weights")
 parser.add_argument("--disable_gpu", default=False, action="store_true", help="Whether to disable GPU")
-parser.add_argument("--min_gen_weight", type=float, default=torch.finfo().min, help="the lower bound of sampling weight of the generator")
+parser.add_argument("--min_gen_weight", type=float, default=torch.finfo().min, help="the lower bound of raw sampling weight of the generator")
+parser.add_argument("--min_gen_norm_weight", type=float, default=0, help="the lower bound of normalized sampling weight of the generator, valid range: [0, 1]")
 parser.add_argument("--policy_loss", default=False, help="whether to use policy gradient loss instead of binary cross entropy loss")
 
 
 opt = parser.parse_args()
 print(opt)
+with open(curr_time + '/commandline_args.txt', 'w') as f:
+    json.dump(opt.__dict__, f, indent=2)
 
 img_shape = (opt.channels, opt.img_size, opt.img_size)
 
@@ -313,7 +317,8 @@ for epoch in tqdm(range(opt.n_epochs)):
                 w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
                 optimizer_Weights.step()
                 with torch.no_grad():
-                    saved_samples.weights[0] = torch.max(saved_samples.weights[0], torch.tensor(opt.min_gen_weight))
+                    min_weight_derived_from_norm_min = torch.logsumexp(saved_samples.weights[1: saved_samples.num_samples], dim=0, keepdim=False) - torch.log(torch.tensor(1 - opt.min_gen_norm_weight))
+                    saved_samples.weights[0] = max([min_weight_derived_from_norm_min, saved_samples.weights[0], opt.min_gen_weight])
             
         # print("Train weights: ", saved_samples.weights[:saved_samples.num_samples])
             
@@ -395,11 +400,11 @@ for epoch in tqdm(range(opt.n_epochs)):
 
             
 # save losses to file and draw a plot
-with open(curr_time + '-loss_lists.pkl', 'wb') as f:
+with open(curr_time + '/loss_lists.pkl', 'wb') as f:
     pickle.dump([g_loss_list, d_real_loss_list, d_fake_loss_list, w_loss_list, w_grad_sum_list], f)
     
 # save final weights to file
-with open(curr_time + "-weights.pkl", 'wb') as f:
+with open(curr_time + "/weights.pkl", 'wb') as f:
     pickle.dump(saved_samples.weights.tolist() , f)
     
 x_len = len(g_loss_list)
@@ -421,10 +426,10 @@ ax4 = plt.subplot(4, 1, 4, sharex=ax1)
 plt.plot(range(x_len), w_loss_list, label = "Weights loss")
 plt.legend()
 plt.xlabel('iter')
-plt.savefig(curr_time + "-loss_plot.png", format="png")
+plt.savefig(curr_time + "/loss_plot.png", format="png")
 
 w_plt = plt.figure("weights")
 plt.plot(range(x_len), w0_list, label = "w0")
 plt.legend()
 plt.xlabel('iter')
-plt.savefig(curr_time + "-weights_plot.png", format="png")
+plt.savefig(curr_time + "/weights_plot.png", format="png")
