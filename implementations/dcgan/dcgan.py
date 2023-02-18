@@ -387,7 +387,8 @@ for epoch in tqdm(range(opt.n_epochs)):
         d_real_loss_list.append(real_loss.item())
         d_fake_loss_list.append(d_fake_loss.item())
         # w0_list.append(saved_samples.weights[0].item())
-        w0_list.append(torch.nn.functional.softmax(saved_samples.weights[:saved_samples.num_samples], 0))
+        w0_list.append(torch.nn.functional.softmax(saved_samples.weights[:saved_samples.num_samples], 0)[0])
+        # print("--w0_list: ", w0_list[-1])
 
         if batches_done % opt.sample_interval == 0:
             save_image(gen_imgs.data[:25], SAVED_FOLDER + "/%d.png" % batches_done, nrow=5, normalize=True)
