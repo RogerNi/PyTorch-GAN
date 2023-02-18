@@ -317,7 +317,7 @@ for epoch in tqdm(range(opt.n_epochs)):
                 w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
                 optimizer_Weights.step()
                 with torch.no_grad():
-                    min_weight_derived_from_norm_min = torch.logsumexp(saved_samples.weights[1: saved_samples.num_samples], dim=0, keepdim=False) - torch.log(torch.tensor(1 - opt.min_gen_norm_weight))
+                    min_weight_derived_from_norm_min = torch.logsumexp(saved_samples.weights[1: saved_samples.num_samples], dim=0, keepdim=False) - torch.log(torch.tensor(1 / opt.min_gen_norm_weight - 1))
                     saved_samples.weights[0] = max([min_weight_derived_from_norm_min, saved_samples.weights[0], opt.min_gen_weight])
             
         # print("Train weights: ", saved_samples.weights[:saved_samples.num_samples])
