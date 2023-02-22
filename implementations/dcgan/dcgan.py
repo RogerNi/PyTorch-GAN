@@ -24,6 +24,8 @@ from tqdm import tqdm
 import time
 import json
 
+from pytorch_fid import fid_score
+
 #===========Redirect message to tqdm================
 import inspect
 # store builtin print
@@ -63,7 +65,7 @@ parser.add_argument("--disable_gpu", default=False, action="store_true", help="W
 parser.add_argument("--min_gen_weight", type=float, default=torch.finfo().min, help="the lower bound of raw sampling weight of the generator")
 parser.add_argument("--min_gen_norm_weight", type=float, default=0, help="the lower bound of normalized sampling weight of the generator, valid range: [0, 1)")
 parser.add_argument("--policy_loss", default=False, help="whether to use policy gradient loss instead of binary cross entropy loss")
-
+parser.add_argument("--fid_freq", type=int, default=2000, help="interval between fid computation")
 
 opt = parser.parse_args()
 print(opt)
@@ -229,18 +231,26 @@ discriminator.apply(weights_init_normal)
 
 # Configure data loader
 os.makedirs("../../data/mnist", exist_ok=True)
-dataloader = torch.utils.data.DataLoader(
-    datasets.MNIST(
+training_dataset = datasets.MNIST(
         "../../data/mnist",
         train=True,
         download=True,
         transform=transforms.Compose(
             [transforms.Resize(opt.img_size), transforms.ToTensor(), transforms.Normalize([0.5], [0.5])]
         ),
-    ),
+    )
+dataloader = torch.utils.data.DataLoader(
+    training_dataset,
     batch_size=opt.batch_size,
     shuffle=True,
 )
+
+# Save MNIST images for FID
+mnist_image_save_path = '../../data/mnist/MNIST/images'
+if not os.path.exists(mnist_image_save_path):
+    os.makedirs(mnist_image_save_path)
+    for i in tqdm(range(len(training_dataset))):
+        save_image(training_dataset[i][0], os.path.join(mnist_image_save_path, f'{i}.png'), normalize=True, value_range=(-1., 1.))
 
 # SavedSamples
 saved_samples = SavedSamples(opt.n_epochs * dataloader.__len__() * opt.batch_size // opt.sample_saving_freq, "cuda" if cuda else "cpu")
@@ -395,6 +405,35 @@ for epoch in tqdm(range(opt.n_epochs)):
         if batches_done % opt.sample_interval == 0:
             save_image(gen_imgs.data[:25], SAVED_FOLDER + "/%d.png" % batches_done, nrow=5, normalize=True)
             save_image(fake_imgs.data[:25], SAVED_FOLDER + "/%d_combined.png" % batches_done, nrow=5, normalize=True)
+
+        if batches_done % opt.fid_freq == 0:
+            generated_samples = []
+            for i in range(int(np.ceil(float(len(training_dataset)) / opt.batch_size))):
+                z = Variable(Tensor(np.random.normal(0, 1, (opt.batch_size, opt.latent_dim))))
+                generated_samples.append(generator(z).detach())
+            generated_samples = torch.cat(generated_samples, dim=0)
+            generated_samples = generated_samples[:len(training_dataset)]
+            mnist_gen_image_save_path = SAVED_FOLDER + '/generated'
+            if not os.path.exists(mnist_gen_image_save_path):
+                os.makedirs(mnist_gen_image_save_path)
+            for i in tqdm(range(generated_samples.shape[0])):
+                save_image(generated_samples[i], os.path.join(mnist_gen_image_save_path, f'{i}.png'), normalize=True, value_range=(-1., 1.))
+            gen_score = fid_score.calculate_fid_given_paths([mnist_gen_image_save_path, mnist_image_save_path], batch_size=1000, device='cuda', dims=2048)
+
+            generated_samples = []
+            for i in range(int(np.ceil(float(len(training_dataset)) / opt.batch_size))):
+                generated_samples.append(saved_samples.get_samples_by_weights(opt.batch_size, generator)[0].detach())
+            generated_samples = torch.cat(generated_samples, dim=0)
+            generated_samples = generated_samples[:len(training_dataset)]
+            mnist_gen_image_save_path = SAVED_FOLDER + '/generated'
+            if not os.path.exists(mnist_gen_image_save_path):
+                os.makedirs(mnist_gen_image_save_path)
+            for i in tqdm(range(generated_samples.shape[0])):
+                save_image(generated_samples[i], os.path.join(mnist_gen_image_save_path, f'{i}.png'), normalize=True, value_range=(-1., 1.))
+            comb_score = fid_score.calculate_fid_given_paths([mnist_gen_image_save_path, mnist_image_save_path], batch_size=1000, device='cuda', dims=2048)
+
+            with open(SAVED_FOLDER + '/fid.csv', 'a') as f:
+                f.write(f'{batches_done} {comb_score} {gen_score}\n')
 
             
 # save losses to file and draw a plot
