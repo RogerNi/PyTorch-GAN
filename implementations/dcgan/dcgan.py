@@ -405,6 +405,9 @@ for epoch in tqdm(range(opt.n_epochs)):
         if batches_done % opt.sample_interval == 0:
             save_image(gen_imgs.data[:25], SAVED_FOLDER + "/%d.png" % batches_done, nrow=5, normalize=True)
             save_image(fake_imgs.data[:25], SAVED_FOLDER + "/%d_combined.png" % batches_done, nrow=5, normalize=True)
+            if saved_samples.num_samples > 25:
+                ids = torch.argsort(saved_samples.weights[1:saved_samples.num_samples], descending=True)[:25].cpu()
+                save_image(saved_samples.samples[ids + 1], SAVED_FOLDER + "/%d_history.png" % batches_done, nrow=5, normalize=True)
 
         if batches_done % opt.fid_freq == 0:
             generated_samples = []
