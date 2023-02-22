@@ -46,5 +46,5 @@ Training using these two commands output very similar results as the original GA
 
 Run our method:
 ```
-python dcgan.py --new_weight_ratio 0.00001
+python dcgan.py --new_weight_ratio 0.001 --policy_loss True
 ```
