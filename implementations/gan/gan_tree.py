@@ -28,6 +28,7 @@ import json
 import sys
 from tree import tree
 sys.modules['tree'] = tree
+dtree = pickle.loads(open("tree/acl5_10k-23-acc-27-bytes-1592431760.25.pkl", "rb").read())
 #==================================
 
 #===========Redirect message to tqdm================
@@ -45,8 +46,7 @@ inspect.builtins.print = new_print
 #====================================================
 
 curr_time = time.strftime("%Y%m%d-%H%M%S") + "-tree"
-SAVED_FOLDER = curr_time + "/images-sampled-on-prob"
-os.makedirs(SAVED_FOLDER, exist_ok=True)
+os.makedirs(curr_time, exist_ok=True)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
@@ -72,6 +72,10 @@ parser.add_argument("--min_gen_weight", type=float, default=torch.finfo().min, h
 parser.add_argument("--min_gen_norm_weight", type=float, default=0, help="the lower bound of normalized sampling weight of the generator, valid range: [0, 1)")
 parser.add_argument("--policy_loss", default=False, help="whether to use policy gradient loss instead of binary cross entropy loss")
 
+parser.add_argument("--tree_threshold", type=float, default=4, help="threshold for decision tree")
+parser.add_argument("--load_dataset", type=str, default="", help="path of dataset to load")
+parser.add_argument("--init_data_size", type=int, default=1e5, help="size of data to generate initially")
+
 opt = parser.parse_args()
 print(opt)
 with open(curr_time + '/commandline_args.txt', 'w') as f:
@@ -81,6 +85,7 @@ input_def = [int(bits) for bits in opt.input_def[1: -1].split(',')]
 total_bits = sum(input_def)
 
 cuda = True if torch.cuda.is_available() and not opt.disable_gpu else False
+print("cuda: ", cuda)
 
 
 class SavedSamples():
@@ -231,13 +236,16 @@ if cuda:
 # Initialize weights
 generator.apply(weights_init_normal)
 discriminator.apply(weights_init_normal)
-    
-# define dataset
 
-class NetworkPacketDataset(Dataset):
-    def __init__(self, size):
-        self.data = (torch.rand((size, total_bits)) > 0.5).type(torch.get_default_dtype())
-        
+    
+print(generator)
+print("Generator device:" + str(next(generator.parameters()).is_cuda))
+print(discriminator)
+print("Discriminator device:" + str(next(discriminator.parameters()).is_cuda))
+
+#================Define Dataset================
+
+class BaseNetworkPacketDataset(Dataset):
     def __len__(self):
         return len(self.data)
     
@@ -247,28 +255,53 @@ class NetworkPacketDataset(Dataset):
     def __unpack__(self, index):
         # unpack to 2 * total_bits (0 -> [1, 0], 1 -> [0, 1])
         return torch.stack([1- self.data[index], self.data[index]]).T.reshape(-1)
+
+class NetworkPacketDataset(BaseNetworkPacketDataset):
+    def __init__(self, size):
+        self.data = (torch.rand((size, total_bits)) > 0.5).type(torch.get_default_dtype())
     
-class NetworkPacketDatasetUnbalancedSample(Dataset):
+class NetworkPacketDatasetUnbalancedSample(BaseNetworkPacketDataset):
     def __init__(self, size):
         self.data = torch.zeros((size, 0))
         input_prob = [0.1, 0.3, 0.5, 0.7, 0.9]
         assert len(input_prob) == len(input_def)
         for id, prob in zip(input_def, input_prob):    
             self.data = torch.hstack([self.data, (torch.rand((size, id)) > prob).type(torch.get_default_dtype())]) 
-        
-    def __len__(self):
-        return len(self.data)
     
-    def __getitem__(self, index):
-        return self.__unpack__(index)
+class NetworkPacketRareDataset(BaseNetworkPacketDataset):
+    def __init__(self, size, threshold):
+        curr_len = 0
+        pbar = tqdm(total=size, desc="Generating rare packets")
+        while curr_len < size:
+            packet = []
+            for id in input_def:    
+                packet.append((torch.rand(id) > 0.5).type(torch.get_default_dtype()))
+            converted_packet = tuple([self._b2i(p.numpy().astype("int")) for p in packet])
+            if dtree.match(converted_packet) > threshold:
+                self.data = torch.vstack([self.data, torch.hstack(packet)]) if curr_len > 0 else torch.hstack(packet)
+                curr_len += 1
+                pbar.update(1)
+        pbar.close()
+                
+    def _b2i(self, b_list):
+        return int("".join(str(x) for x in b_list), 2) 
     
-    def __unpack__(self, index):
-        # unpack to 2 * total_bits (0 -> [1, 0], 1 -> [0, 1])
-        return torch.stack([1- self.data[index], self.data[index]]).T.reshape(-1)
+class NetworkPacketRareDatasetFromFile(BaseNetworkPacketDataset):
+    def __init__(self, path):
+        self.data = torch.load(path)
+    
+#==============================================
+    
+# dataset = NetworkPacketDataset(int(1e5))
+if opt.load_dataset:
+    dataset = NetworkPacketRareDatasetFromFile(opt.load_dataset)
+else:
+    dataset = NetworkPacketRareDataset(opt.init_data_size, 4)
+    torch.save(dataset.data, curr_time + "/init_dataset.pt")
 
 # Configure data loader
 dataloader = torch.utils.data.DataLoader(
-    NetworkPacketDatasetUnbalancedSample(int(1e5)),
+    dataset,
     batch_size=opt.batch_size,
     shuffle=True,
 )
@@ -319,7 +352,7 @@ for epoch in tqdm(range(opt.n_epochs)):
         weights_loss = None
         w_grad_sum = 0
                 
-        if saved_samples.num_samples > 1 and not opt.skip_weights and not torch.isnan(weights)[0] and sum_weights > 1e-20:
+        if saved_samples.num_samples > 1:
             # train the weights only when there are samples saved
             if opt.policy_loss:
                 # sample by weights
@@ -330,21 +363,22 @@ for epoch in tqdm(range(opt.n_epochs)):
             else:
                 # sample uniformly
                 samples, weights, sum_weights = saved_samples.get_samples_uniformly(imgs.shape[0], generator)
-
-            # only train the weights when the sum of softmax weights (before normalization) is big enough to avoid gradient to become nan
-            disc_pred = discriminator(samples)
-            if opt.policy_loss:
-                # use pg_loss instead of adversarial_loss
-                weights_loss = pg_loss(disc_pred, weights)
-            else:
-                weights_loss = -torch.sum(disc_pred * weights) 
             
-            weights_loss.backward()
-            w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
-            optimizer_Weights.step()
-            with torch.no_grad():
-                min_weight_derived_from_norm_min = torch.logsumexp(saved_samples.weights[1: saved_samples.num_samples], dim=0) - torch.log(torch.tensor(1 / opt.min_gen_norm_weight - 1)) if opt.min_gen_norm_weight > 0 else torch.finfo().min
-                saved_samples.weights[0] = max([min_weight_derived_from_norm_min, saved_samples.weights[0], opt.min_gen_weight])
+            if not opt.skip_weights and not torch.isnan(weights)[0] and sum_weights > 1e-20: 
+                # only train the weights when the sum of softmax weights (before normalization) is big enough to avoid gradient to become nan
+                disc_pred = discriminator(samples)
+                if opt.policy_loss:
+                    # use pg_loss instead of adversarial_loss
+                    weights_loss = pg_loss(disc_pred, weights)
+                else:
+                    weights_loss = -torch.sum(disc_pred * weights) 
+                
+                weights_loss.backward()
+                w_grad_sum = saved_samples.weights.grad.norm(dim=0, p=2).to('cpu') # save the norm of gradients for debugging
+                optimizer_Weights.step()
+                with torch.no_grad():
+                    min_weight_derived_from_norm_min = torch.logsumexp(saved_samples.weights[1: saved_samples.num_samples], dim=0) - torch.log(torch.tensor(1 / opt.min_gen_norm_weight - 1)) if opt.min_gen_norm_weight > 0 else torch.finfo().min
+                    saved_samples.weights[0] = max([min_weight_derived_from_norm_min, saved_samples.weights[0], opt.min_gen_weight])
             
         # print("Train weights: ", saved_samples.weights[:saved_samples.num_samples])
             
@@ -381,8 +415,7 @@ for epoch in tqdm(range(opt.n_epochs)):
         # Loss for fake images
         fake_imgs, _ = saved_samples.get_samples_by_weights(imgs.shape[0], generator)
         fake_pred = discriminator(fake_imgs.detach())
-        print("fake img: ", fake_imgs)
-        print("real img: ", real_imgs)
+
         # d_fake_loss = torch.mean(adversarial_loss(fake_pred, fake))
         d_real_loss = -torch.mean(discriminator(real_imgs))
         d_fake_loss = torch.mean(discriminator(fake_imgs))
@@ -418,7 +451,7 @@ for epoch in tqdm(range(opt.n_epochs)):
 
         
         
-torch.save(saved_samples.samples, curr_time + '/samples.pt')
+torch.save(saved_samples.samples[1:saved_samples.num_samples], curr_time + '/samples.pt')
 
             
 # save losses to file and draw a plot
