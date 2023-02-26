@@ -16,13 +16,10 @@ sys.modules['tree'] = tree
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--draw_group_size", type=int, default=0, help="divide samples into groups of this size, by default no grouping")
 parser.add_argument("--tree_path", type=str, default= "tree/acl5_10k-23-acc-27-bytes-1592431760.25.pkl", help="path to decision tree")
 parser.add_argument("--input_file", type=str, help="input file")
-parser.add_argument("--output_folder", type=str, help="output folder")
-parser.add_argument("--generate_video", default=False, action="store_true", help="generate video")
+parser.add_argument("--threshold", type=int, help="threshold")
 parser.add_argument("--skip_format_converting", default=False, action="store_true", help="Use this flag for initial dataset")
-
 
 opt = parser.parse_args()
 
@@ -122,10 +119,7 @@ def gen_graph_torch(data2):
 def gen_graph_by_group(data_path, output_folder, group_size):
     os.makedirs(output_folder, exist_ok=True)
     data = torch.load(data_path)
-    if not opt.skip_format_converting:
-        data = data.reshape(-1, 103, 2).argmax(-1).numpy()
-    else:
-        data = data.int().numpy()
+    data = data.reshape(-1, 103, 2).argmax(-1).numpy()
     if group_size > 0:
         data = data[:data.shape[0] - data.shape[0] % group_size]
         print("data shape: ", data.shape)
@@ -138,5 +132,19 @@ def gen_graph_by_group(data_path, output_folder, group_size):
         dot.render(output_file, view=False, format='svg', engine='twopi')
         dot.render(output_file, view=False, format='jpeg', engine='twopi')
         
+def count_paths_above_threshold(data_path, threshold):
+    data = torch.load(data_path)
+    if not opt.skip_format_converting:
+        data = data.reshape(-1, 103, 2).argmax(-1)
+    data = np_inputs_to_field_dict_inputs(data.int().numpy())
+    paths = box.test_path(data)
+    print("Number of paths: ", len(paths))
+    paths_above_threshold = []
+    for p in paths:
+        if len(p.split(',')) > threshold:
+            paths_above_threshold.append(p)
+    print("Number of paths above threshold: ", len(paths_above_threshold))
+    return len(set(paths_above_threshold))
+        
 if __name__ == "__main__":
-    gen_graph_by_group(opt.input_file, opt.output_folder, opt.draw_group_size)
+    print("Number of unique paths above threshold: ", count_paths_above_threshold(opt.input_file, opt.threshold))
