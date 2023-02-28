@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # config
-device = torch.device('cuda')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-PATH = "./testModel.ckpt"
+PATH = "./cnn_model_0.99.ckpt"
 
 # Param
 num_epochs = 5
