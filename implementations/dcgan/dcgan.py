@@ -450,8 +450,8 @@ for epoch in tqdm(range(opt.n_epochs)):
             if saved_samples.num_samples > 25:
                 ids = torch.argsort(saved_samples.weights[1:saved_samples.num_samples], descending=True)[:25].cpu()
                 save_image(saved_samples.samples[ids + 1], SAVED_FOLDER + "/%d_history.png" % batches_done, nrow=5, normalize=True)
-
-        if opt.fid and batches_done % opt.fid_freq == 0:
+        
+        if opt.fid == True and batches_done % opt.fid_freq == 0:
             print("Calculating FID...")
             generated_samples = []
             for i in range(int(np.ceil(float(len(training_dataset)) / opt.batch_size))):
