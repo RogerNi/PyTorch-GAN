@@ -24,6 +24,9 @@ from tqdm import tqdm
 import time
 import json
 
+import random
+import string
+
 #===========Decision Tree==========
 import sys
 from tree import tree
@@ -45,7 +48,7 @@ def new_print(*args, **kwargs):
 inspect.builtins.print = new_print
 #====================================================
 
-curr_time = time.strftime("%Y%m%d-%H%M%S") + "-tree"
+curr_time = time.strftime("%Y%m%d-%H%M%S") + "-tree-" + ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
 os.makedirs(curr_time, exist_ok=True)
 
 parser = argparse.ArgumentParser()
@@ -75,6 +78,8 @@ parser.add_argument("--policy_loss", default=False, help="whether to use policy 
 parser.add_argument("--tree_threshold", type=float, default=4, help="threshold for decision tree")
 parser.add_argument("--load_dataset", type=str, default="", help="path of dataset to load")
 parser.add_argument("--init_data_size", type=int, default=1e5, help="size of data to generate initially")
+parser.add_argument("--fixed_w0", type=float, default=0, help="whether to use fixed w0, valid range: [0, 1] with 0 being w0 not fixed")
+
 
 opt = parser.parse_args()
 print(opt)
@@ -112,8 +117,16 @@ class SavedSamples():
 
     
     def get_samples_by_weights(self, n, generator):
-        indices = list(WeightedRandomSampler(
-            torch.nn.functional.softmax(self.weights[:self.num_samples], 0), n, replacement=True)) # weighted random samples
+        if self.num_samples == 1:
+            all_weights = torch.tensor([1], device=self.device)
+        elif opt.fixed_w0 == 0:
+            all_weights = torch.nn.functional.softmax(self.weights[:self.num_samples], 0)
+        else:
+            all_weights = torch.cat((torch.tensor([opt.fixed_w0], device=self.device), torch.nn.functional.softmax(self.weights[1:self.num_samples], 0) * (1 - opt.fixed_w0)), 0)
+            
+        # assert abs(torch.sum(all_weights) - 1) < 1e-3, "Sum of weights is not close to 1 which is {}".format(torch.sum(all_weights))
+        
+        indices = list(WeightedRandomSampler(all_weights, n, replacement=True)) # weighted random samples
 
         indices = torch.tensor(indices)
         
@@ -121,7 +134,7 @@ class SavedSamples():
         num_gen_indices = torch.sum(gen_indices) # get the number of samples needed from the generator
                 
         selected_samples = self.samples[indices].to(self.device) # sample from self.samples
-        weights = torch.nn.functional.softmax(self.weights[:self.num_samples], 0)[indices]
+        weights = all_weights[indices]
         
         if num_gen_indices > 0:
             # Sample from generator if num_gen_indices is larger than 0

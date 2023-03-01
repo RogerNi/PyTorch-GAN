@@ -493,7 +493,7 @@ for epoch in tqdm(range(opt.n_epochs)):
                 gen_imgs.append(generator(z).detach())
             
             count = torch.zeros(10).to(device="cuda" if cuda else "cpu")
-            eps = torch.ones(10) / 1e5
+            eps = (torch.ones(10) / 1e5).to(device="cuda" if cuda else "cpu")
             for images in gen_imgs:
                 images = images.to(device="cuda" if cuda else "cpu")
                 # print("-- images:",images.shape)
@@ -508,7 +508,7 @@ for epoch in tqdm(range(opt.n_epochs)):
             distribution = count / torch.sum(count)
             print("-- check_distribution:",distribution)
             kl = nn.KLDivLoss(reduction='batchmean')
-            target = torch.ones(10) / 10
+            target = (torch.ones(10) / 10).to(device="cuda" if cuda else "cpu")
             kl_loss = kl(torch.log(distribution), target)
             print("-- kl batch mean loss:",kl_loss)
             kl_loss_list.append(kl_loss.item())

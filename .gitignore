@@ -13,6 +13,17 @@ __pycache__
 
 *.png
 *checkpoint.py
+*.pkl
+*.svg
+*.out
+*.pt
+*lists
+*.txt
+
+integrated
+tree_output
+*.zip
+
 **.gz
 **ubyte
 **.log
