@@ -501,9 +501,9 @@ for epoch in tqdm(range(opt.n_epochs)):
                 _, predicted = torch.max(outputs.data, 1)
                 # one hot encoding
                 predicted_oh = F.one_hot(predicted, num_classes = 10)
-                temp_pred = torch.sum(predicted_oh, dim=0).to(device="cuda" if cuda else "cpu")
-                count = torch.add(count, temp_pred).to(device="cuda" if cuda else "cpu")
-            count = torch.add(count, eps).to(device="cuda" if cuda else "cpu")
+                temp_pred = torch.sum(predicted_oh, dim=0)
+                count = torch.add(count, temp_pred)
+            count = torch.add(count, eps)
             
             distribution = count / torch.sum(count)
             print("-- check_distribution:",distribution)
@@ -515,7 +515,9 @@ for epoch in tqdm(range(opt.n_epochs)):
 
     print("kl_loss_list:",kl_loss_list)
 
-
+# save kl_loss_list to file and draw a plot
+with open(curr_time + '/kl_loss_list.pkl', 'wb') as f:
+    pickle.dump(kl_loss_list, f)
             
 # save losses to file and draw a plot
 with open(curr_time + '/loss_lists.pkl', 'wb') as f:
@@ -551,3 +553,9 @@ plt.plot(range(x_len), w0_list, label = "w0")
 plt.legend()
 plt.xlabel('iter')
 plt.savefig(curr_time + "/weights_plot.png", format="png")
+
+kl_plt = plt.figure("kl_loss")
+plt.plot(range(len(kl_loss_list)), kl_loss_list, label = "kl_loss")
+plt.legend()
+plt.xlabel('iter')
+plt.savefig(curr_time + "/kl_loss_plot.png", format="png")
