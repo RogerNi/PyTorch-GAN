@@ -488,7 +488,7 @@ for epoch in tqdm(range(opt.n_epochs)):
                 # Generate a batch of images
                 gen_imgs.append(generator(z).detach())
             
-            count = torch.zeros(10)
+            count = torch.zeros(10).to(device="cuda" if cuda else "cpu")
             eps = torch.ones(10) / 1e5
             for images in gen_imgs:
                 images = images.to(device="cuda" if cuda else "cpu")
@@ -497,9 +497,9 @@ for epoch in tqdm(range(opt.n_epochs)):
                 _, predicted = torch.max(outputs.data, 1)
                 # one hot encoding
                 predicted_oh = F.one_hot(predicted, num_classes = 10)
-                temp_pred = torch.sum(predicted_oh, dim=0)
-                count = torch.add(count, temp_pred)
-            count = torch.add(count, eps)
+                temp_pred = torch.sum(predicted_oh, dim=0).to(device="cuda" if cuda else "cpu")
+                count = torch.add(count, temp_pred).to(device="cuda" if cuda else "cpu")
+            count = torch.add(count, eps).to(device="cuda" if cuda else "cpu")
             
             distribution = count / torch.sum(count)
             print("-- check_distribution:",distribution)
