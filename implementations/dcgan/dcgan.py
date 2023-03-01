@@ -450,34 +450,34 @@ for epoch in tqdm(range(opt.n_epochs)):
                 ids = torch.argsort(saved_samples.weights[1:saved_samples.num_samples], descending=True)[:25].cpu()
                 save_image(saved_samples.samples[ids + 1], SAVED_FOLDER + "/%d_history.png" % batches_done, nrow=5, normalize=True)
 
-        # if batches_done % opt.fid_freq == 0:
-        #     generated_samples = []
-        #     for i in range(int(np.ceil(float(len(training_dataset)) / opt.batch_size))):
-        #         z = Variable(Tensor(np.random.normal(0, 1, (opt.batch_size, opt.latent_dim))))
-        #         generated_samples.append(generator(z).detach())
-        #     generated_samples = torch.cat(generated_samples, dim=0)
-        #     generated_samples = generated_samples[:len(training_dataset)]
-        #     mnist_gen_image_save_path = SAVED_FOLDER + '/generated'
-        #     if not os.path.exists(mnist_gen_image_save_path):
-        #         os.makedirs(mnist_gen_image_save_path)
-        #     for i in tqdm(range(generated_samples.shape[0])):
-        #         save_image(generated_samples[i], os.path.join(mnist_gen_image_save_path, f'{i}.png'), normalize=True, value_range=(-1., 1.))
-        #     gen_score = fid_score.calculate_fid_given_paths([mnist_gen_image_save_path, mnist_image_save_path], batch_size=opt.fid_batch_size, device="cuda" if cuda else "cpu", dims=2048)
+        if batches_done % opt.fid_freq == 0:
+            generated_samples = []
+            for i in range(int(np.ceil(float(len(training_dataset)) / opt.batch_size))):
+                z = Variable(Tensor(np.random.normal(0, 1, (opt.batch_size, opt.latent_dim))))
+                generated_samples.append(generator(z).detach())
+            generated_samples = torch.cat(generated_samples, dim=0)
+            generated_samples = generated_samples[:len(training_dataset)]
+            mnist_gen_image_save_path = SAVED_FOLDER + '/generated'
+            if not os.path.exists(mnist_gen_image_save_path):
+                os.makedirs(mnist_gen_image_save_path)
+            for i in tqdm(range(generated_samples.shape[0])):
+                save_image(generated_samples[i], os.path.join(mnist_gen_image_save_path, f'{i}.png'), normalize=True, value_range=(-1., 1.))
+            gen_score = fid_score.calculate_fid_given_paths([mnist_gen_image_save_path, mnist_image_save_path], batch_size=opt.fid_batch_size, device="cuda" if cuda else "cpu", dims=2048)
 
-        #     generated_samples = []
-        #     for i in range(int(np.ceil(float(len(training_dataset)) / opt.batch_size))):
-        #         generated_samples.append(saved_samples.get_samples_by_weights(opt.batch_size, generator)[0].detach())
-        #     generated_samples = torch.cat(generated_samples, dim=0)
-        #     generated_samples = generated_samples[:len(training_dataset)]
-        #     mnist_gen_image_save_path = SAVED_FOLDER + '/generated'
-        #     if not os.path.exists(mnist_gen_image_save_path):
-        #         os.makedirs(mnist_gen_image_save_path)
-        #     for i in tqdm(range(generated_samples.shape[0])):
-        #         save_image(generated_samples[i], os.path.join(mnist_gen_image_save_path, f'{i}.png'), normalize=True, value_range=(-1., 1.))
-        #     comb_score = fid_score.calculate_fid_given_paths([mnist_gen_image_save_path, mnist_image_save_path], batch_size=opt.fid_batch_size, device="cuda" if cuda else "cpu", dims=2048)
+            generated_samples = []
+            for i in range(int(np.ceil(float(len(training_dataset)) / opt.batch_size))):
+                generated_samples.append(saved_samples.get_samples_by_weights(opt.batch_size, generator)[0].detach())
+            generated_samples = torch.cat(generated_samples, dim=0)
+            generated_samples = generated_samples[:len(training_dataset)]
+            mnist_gen_image_save_path = SAVED_FOLDER + '/generated'
+            if not os.path.exists(mnist_gen_image_save_path):
+                os.makedirs(mnist_gen_image_save_path)
+            for i in tqdm(range(generated_samples.shape[0])):
+                save_image(generated_samples[i], os.path.join(mnist_gen_image_save_path, f'{i}.png'), normalize=True, value_range=(-1., 1.))
+            comb_score = fid_score.calculate_fid_given_paths([mnist_gen_image_save_path, mnist_image_save_path], batch_size=opt.fid_batch_size, device="cuda" if cuda else "cpu", dims=2048)
 
-        #     with open(SAVED_FOLDER + '/fid.csv', 'a') as f:
-        #         f.write(f'{batches_done} {comb_score} {gen_score}\n')
+            with open(SAVED_FOLDER + '/fid.csv', 'a') as f:
+                f.write(f'{batches_done} {comb_score} {gen_score}\n')
         
         if batches_done % opt.check_distribution == 0:
             gen_imgs = []
