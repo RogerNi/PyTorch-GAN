@@ -13,3 +13,6 @@ __pycache__
 
 *.png
 *checkpoint.py
+**.gz
+**ubyte
+**.log
