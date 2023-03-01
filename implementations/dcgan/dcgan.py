@@ -556,6 +556,7 @@ plt.savefig(curr_time + "/weights_plot.png", format="png")
 
 kl_plt = plt.figure("kl_loss")
 plt.plot(range(len(kl_loss_list)), kl_loss_list, label = "kl_loss")
+plt.yscale("log")
 plt.legend()
 plt.xlabel('iter')
 plt.savefig(curr_time + "/kl_loss_plot.png", format="png")
